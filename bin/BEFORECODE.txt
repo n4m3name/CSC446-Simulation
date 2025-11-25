@@ -1,0 +1,5 @@
+git checkout main
+git pull origin main
+
+git checkout alice/lob-sim     # or bob/...
+git rebase main
