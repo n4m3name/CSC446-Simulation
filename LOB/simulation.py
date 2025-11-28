@@ -269,88 +269,185 @@ class Simulation:
             "mm_inventory": self.mm_inventory,
         }
 
-
 if __name__ == "__main__":
+    import argparse
     import pandas as pd
-    
-    # --- 1. Define Simulation Scenarios ---
-    
-    # We will simulate for a short time (e.g., 600s) for quick testing.
-    SIM_DURATION = 600.0 
-    
-    scenarios = {
-        "Low_Activity": {
-            "lam_limit_buy": 0.6,
-            "lam_limit_sell": 0.6,
-            "lam_mkt_buy": 0.2,
-            "lam_mkt_sell": 0.2,
-            "lam_cancel": 0.1,
-            "mm_base_spread": 2.0,
-            "seed": 100,
-        },
-        "Mid_Activity": { # Scaled-down VFV rates (for manageable simulation time)
-            "lam_limit_buy": 2.0,
-            "lam_limit_sell": 2.0,
-            "lam_mkt_buy": 0.8,
-            "lam_mkt_sell": 0.8,
-            "lam_cancel": 3.0,
-            "mm_base_spread": 1.0, # Tighter spread reflects higher competition
-            "seed": 200,
-        },
-        "High_Activity": { # Higher, more competitive environment
-            "lam_limit_buy": 5.0,
-            "lam_limit_sell": 5.0,
-            "lam_mkt_buy": 2.0,
-            "lam_mkt_sell": 2.0,
-            "lam_cancel": 7.0,
-            "mm_base_spread": 0.5, # Very tight spread
-            "seed": 300,
-        },
-    }
+    import numpy as np
 
-    results_list = []
-    
-    # --- 2. Run the Simulation Suite ---
-    print(f"Running {len(scenarios)} simulations for {SIM_DURATION} seconds each...")
+    parser = argparse.ArgumentParser(description="LOB Simulation Runner")
+    parser.add_argument(
+        "--activity",
+        action="store_true",
+        help="Run Low/Mid/High Activity scenarios (VFV-style rates)"
+    )
+    parser.add_argument(
+        "--stress",
+        action="store_true",
+        help="Run Extended Stress-Test scenario suite (arrival/cancel/MM variations)"
+    )
+    args = parser.parse_args()
 
-    for name, params in scenarios.items():
-        # Initialize a fresh simulation instance for each scenario
-        sim = Simulation(
+    # ------------------------------------------------------------------
+    # Helper: run a scenario and return results dict
+    # ------------------------------------------------------------------
+    def run_scenario(label, **params):
+        sim = Simulation(**params)
+        results = sim.run()
+        print("\n=== Scenario:", label, "===")
+        print("Average spread:       ", results["avg_spread"])
+        print("Median exec time:     ", results["median_exec_time"])
+        print("MM final P&L:         ", results["mm_final_pnl"])
+        print("MM final inventory:   ", results["mm_final_inventory"])
+        print("Total executions:     ", results["total_executions"])
+        print("-" * 40)
+        return results
+
+    # ------------------------------------------------------------------
+    # MODE 1: No flags → run the BASELINE single-run test
+    # ------------------------------------------------------------------
+    if not args.activity and not args.stress:
+        print("Running single baseline simulation...\n")
+
+        baseline_params = dict(
+            sim_duration=600.0,
+            initial_price=100.0,
+            lam_limit_buy=0.6,
+            lam_limit_sell=0.6,
+            lam_mkt_buy=0.2,
+            lam_mkt_sell=0.2,
+            lam_cancel=0.1,
+            mm_base_spread=2.0,
+            mm_skew_coef=0.05,
+            seed=123,
+        )
+
+        run_scenario("Baseline", **baseline_params)
+        exit()
+
+    # ------------------------------------------------------------------
+    # MODE 2: --activity → run the Low/Mid/High Activity suite you provided
+    # ------------------------------------------------------------------
+    if args.activity:
+        print("Running Activity Scenarios (Low/Mid/High)...")
+        SIM_DURATION = 600.0
+
+        scenarios = {
+            "Low_Activity": {
+                "lam_limit_buy": 0.6,
+                "lam_limit_sell": 0.6,
+                "lam_mkt_buy": 0.2,
+                "lam_mkt_sell": 0.2,
+                "lam_cancel": 0.1,
+                "mm_base_spread": 2.0,
+                "seed": 100,
+            },
+            "Mid_Activity": {
+                "lam_limit_buy": 2.0,
+                "lam_limit_sell": 2.0,
+                "lam_mkt_buy": 0.8,
+                "lam_mkt_sell": 0.8,
+                "lam_cancel": 3.0,
+                "mm_base_spread": 1.0,
+                "seed": 200,
+            },
+            "High_Activity": {
+                "lam_limit_buy": 5.0,
+                "lam_limit_sell": 5.0,
+                "lam_mkt_buy": 2.0,
+                "lam_mkt_sell": 2.0,
+                "lam_cancel": 7.0,
+                "mm_base_spread": 0.5,
+                "seed": 300,
+            },
+        }
+
+        for name, params in scenarios.items():
+            run_scenario(
+                name,
+                sim_duration=SIM_DURATION,
+                initial_price=100.0,
+                mm_skew_coef=0.05,
+                **params
+            )
+        exit()
+
+    # ------------------------------------------------------------------
+    # MODE 3: --stress → run the full experimental suite I designed
+    # ------------------------------------------------------------------
+    if args.stress:
+        print("Running Stress-Test Scenarios...")
+        SIM_DURATION = 600.0
+        base = dict(
             sim_duration=SIM_DURATION,
             initial_price=100.0,
+            lam_limit_buy=0.6,
+            lam_limit_sell=0.6,
+            lam_mkt_buy=0.2,
+            lam_mkt_sell=0.2,
+            lam_cancel=0.1,
+            mm_base_spread=2.0,
             mm_skew_coef=0.05,
-            **params # Unpack the scenario-specific rates and seed
         )
-        
-        results = sim.run()
-        
-        # Capture the key output metrics (for optional later analysis/comparison)
-        results_list.append({
-            "Scenario": name,
-            "Total Rate (events/s)": sum(
-                [params[k] for k in params if k.startswith("lam_")]
-            ),
-            "Avg. Spread": results["avg_spread"],
-            "Median Exec Time (s)": results["median_exec_time"],
-            "Total Executions": results["total_executions"],
-            "MM Final P&L": results["mm_final_pnl"],
-            "MM Final Inventory": results["mm_final_inventory"],
-        })
 
-    # --- 3. Output Results in Requested Format ---
-    
-    print("\n" + "=" * 50)
-    print("Simulation Comparison Results (Individual Format)")
-    print("=" * 50)
+        # 1) Baseline
+        run_scenario("Baseline", seed=123, **base)
 
-    # Iterate through the collected results and print them in the requested style
-    for result in results_list:
-        print(f"\n--- Scenario: {result['Scenario']} ---")
-        print("Average spread:        ", round(result["Avg. Spread"], 4))
-        print("Median exec time:      ", round(result["Median Exec Time (s)"], 4))
-        print("MM final P&L:          ", round(result["MM Final P&L"], 2))
-        print("MM final inventory:    ", result["MM Final Inventory"])
-        print("Number of executions:  ", result["Total Executions"])
-        print("-" * 35)
+        # 2) High order flow
+        run_scenario(
+            "High order flow",
+            seed=124,
+            **{**base,
+               "lam_limit_buy": 1.0,
+               "lam_limit_sell": 1.0,
+               "lam_mkt_buy": 0.4,
+               "lam_mkt_sell": 0.4}
+        )
 
-    print("\n" + "=" * 50)
+        # 3) Low order flow
+        run_scenario(
+            "Low order flow",
+            seed=125,
+            **{**base,
+               "lam_limit_buy": 0.3,
+               "lam_limit_sell": 0.3,
+               "lam_mkt_buy": 0.1,
+               "lam_mkt_sell": 0.1}
+        )
+
+        # 4) High cancellations
+        run_scenario("High cancellations", seed=126, **{**base, "lam_cancel": 0.3})
+
+        # 5) Low cancellations
+        run_scenario("Low cancellations", seed=127, **{**base, "lam_cancel": 0.02})
+
+        # 6) Aggressive MM
+        run_scenario(
+            "Aggressive MM",
+            seed=128,
+            **{**base, "mm_base_spread": 1.0, "mm_skew_coef": 0.02}
+        )
+
+        # 7) Passive MM
+        run_scenario(
+            "Passive MM",
+            seed=129,
+            **{**base, "mm_base_spread": 3.0, "mm_skew_coef": 0.1}
+        )
+
+        # 8) Buy pressure
+        run_scenario(
+            "Buy pressure",
+            seed=130,
+            **{**base,
+               "lam_limit_buy": 0.9,
+               "lam_mkt_buy": 0.4}
+        )
+
+        # 9) Sell pressure
+        run_scenario(
+            "Sell pressure",
+            seed=131,
+            **{**base,
+               "lam_limit_sell": 0.9,
+               "lam_mkt_sell": 0.4}
+        )
