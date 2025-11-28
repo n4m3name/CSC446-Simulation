@@ -271,24 +271,86 @@ class Simulation:
 
 
 if __name__ == "__main__":
-    # Example: run one simulation and print some key stats
-    sim = Simulation(
-        sim_duration=600.0,        # run for 600 time units
-        initial_price=100.0,
-        lam_limit_buy=0.6,
-        lam_limit_sell=0.6,
-        lam_mkt_buy=0.2,
-        lam_mkt_sell=0.2,
-        lam_cancel=0.1,
-        mm_base_spread=2.0,
-        mm_skew_coef=0.05,
-        seed=123,
-    )
+    import pandas as pd
+    
+    # --- 1. Define Simulation Scenarios ---
+    
+    # We will simulate for a short time (e.g., 600s) for quick testing.
+    SIM_DURATION = 600.0 
+    
+    scenarios = {
+        "Low_Activity": {
+            "lam_limit_buy": 0.6,
+            "lam_limit_sell": 0.6,
+            "lam_mkt_buy": 0.2,
+            "lam_mkt_sell": 0.2,
+            "lam_cancel": 0.1,
+            "mm_base_spread": 2.0,
+            "seed": 100,
+        },
+        "Mid_Activity": { # Scaled-down VFV rates (for manageable simulation time)
+            "lam_limit_buy": 2.0,
+            "lam_limit_sell": 2.0,
+            "lam_mkt_buy": 0.8,
+            "lam_mkt_sell": 0.8,
+            "lam_cancel": 3.0,
+            "mm_base_spread": 1.0, # Tighter spread reflects higher competition
+            "seed": 200,
+        },
+        "High_Activity": { # Higher, more competitive environment
+            "lam_limit_buy": 5.0,
+            "lam_limit_sell": 5.0,
+            "lam_mkt_buy": 2.0,
+            "lam_mkt_sell": 2.0,
+            "lam_cancel": 7.0,
+            "mm_base_spread": 0.5, # Very tight spread
+            "seed": 300,
+        },
+    }
 
-    results = sim.run()
-    print("Average spread:        ", results["avg_spread"])
-    print("Median exec time:      ", results["median_exec_time"])
-    # Removed Mean Execution Time print statement
-    print("MM final P&L:          ", results["mm_final_pnl"])
-    print("MM final inventory:    ", results["mm_final_inventory"])
-    print("Number of executions:  ", results["total_executions"])
+    results_list = []
+    
+    # --- 2. Run the Simulation Suite ---
+    print(f"Running {len(scenarios)} simulations for {SIM_DURATION} seconds each...")
+
+    for name, params in scenarios.items():
+        # Initialize a fresh simulation instance for each scenario
+        sim = Simulation(
+            sim_duration=SIM_DURATION,
+            initial_price=100.0,
+            mm_skew_coef=0.05,
+            **params # Unpack the scenario-specific rates and seed
+        )
+        
+        results = sim.run()
+        
+        # Capture the key output metrics (for optional later analysis/comparison)
+        results_list.append({
+            "Scenario": name,
+            "Total Rate (events/s)": sum(
+                [params[k] for k in params if k.startswith("lam_")]
+            ),
+            "Avg. Spread": results["avg_spread"],
+            "Median Exec Time (s)": results["median_exec_time"],
+            "Total Executions": results["total_executions"],
+            "MM Final P&L": results["mm_final_pnl"],
+            "MM Final Inventory": results["mm_final_inventory"],
+        })
+
+    # --- 3. Output Results in Requested Format ---
+    
+    print("\n" + "=" * 50)
+    print("Simulation Comparison Results (Individual Format)")
+    print("=" * 50)
+
+    # Iterate through the collected results and print them in the requested style
+    for result in results_list:
+        print(f"\n--- Scenario: {result['Scenario']} ---")
+        print("Average spread:        ", round(result["Avg. Spread"], 4))
+        print("Median exec time:      ", round(result["Median Exec Time (s)"], 4))
+        print("MM final P&L:          ", round(result["MM Final P&L"], 2))
+        print("MM final inventory:    ", result["MM Final Inventory"])
+        print("Number of executions:  ", result["Total Executions"])
+        print("-" * 35)
+
+    print("\n" + "=" * 50)
