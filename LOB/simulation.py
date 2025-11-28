@@ -138,15 +138,6 @@ class Simulation:
     def _handle_trade(self, trade):
         """
         Update MM PnL and collect execution-time stats.
-
-        Trade dict structure (from OrderBook):
-            {
-                "price": float,
-                "quantity": int,
-                "time": float,
-                "buy_order": Order or None,
-                "sell_order": Order or None,
-            }
         """
         price = trade["price"]
         qty = trade["quantity"]
@@ -155,8 +146,15 @@ class Simulation:
         # Execution times for "noise" limit orders that got filled
         for role in ("buy_order", "sell_order"):
             order = trade[role]
+            
+            # 1. Check if the order exists and is a "noise" trader
             if order is not None and order.trader_id == "noise":
-                self.exec_times.append(t - order.time_created)
+                duration = t - order.time_created
+                
+                # 2. FIX: Only record if the duration is positive (Limit Orders)
+                # Market orders have duration == 0.0
+                if duration > 1e-9:  
+                    self.exec_times.append(duration)
 
         # MM inventory and cash: update when MM is involved
         for role, side in (("buy_order", "buy"), ("sell_order", "sell")):
@@ -289,7 +287,7 @@ if __name__ == "__main__":
         lam_mkt_buy=0.2,
         lam_mkt_sell=0.2,
         lam_cancel=0.1,
-        mm_base_spread=1.0,
+        mm_base_spread=2.0,
         mm_skew_coef=0.05,
         seed=123,
     )
