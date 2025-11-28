@@ -3,7 +3,6 @@ You can vary:
 - market order arrival rates
 - cancellation rates
 - market-maker parameters
-- price band widths
 
 Then measure:
 - average spread

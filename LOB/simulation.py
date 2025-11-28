@@ -1,26 +1,7 @@
 # simulation.py
 """
 Main simulation loop for the limit order book.
-
-Assumes the following modules exist in the same directory:
-    - order.py         : defines Order
-    - bid.py           : defines BidHeap
-    - ask.py           : defines AskHeap
-    - order_book.py    : defines OrderBook
-    - market_maker.py  : defines MarketMaker
-
-This file:
-    - runs a discrete-event simulation in continuous time
-    - events arrive as independent Poisson processes:
-        * limit_buy, limit_sell
-        * market_buy, market_sell
-        * cancel
-    - market maker quotes after each event
-    - price–time priority matching inside the order book
-    - tracks:
-        * bid–ask spreads
-        * execution times of "noise" limit orders
-        * MM inventory and PnL over time
+... (rest of the docstring remains the same)
 """
 
 import numpy as np
@@ -74,7 +55,9 @@ class Simulation:
         self.spread_times = []
         self.spreads = []
 
-        self.exec_times = []        # execution times for "noise" limit orders
+        # --- EXECUTION METRICS ---
+        self.exec_times = []        # Wait times for Resting Limit Orders (duration > 0)
+        self.mkt_exec_count = 0     # Count of Immediate Market Orders (duration = 0)
 
         self.mm_times = []
         self.mm_pnls = []
@@ -143,7 +126,7 @@ class Simulation:
         qty = trade["quantity"]
         t = trade["time"]
 
-        # Execution times for "noise" limit orders that got filled
+        # Execution times for "noise" orders that got filled
         for role in ("buy_order", "sell_order"):
             order = trade[role]
             
@@ -151,10 +134,13 @@ class Simulation:
             if order is not None and order.trader_id == "noise":
                 duration = t - order.time_created
                 
-                # 2. FIX: Only record if the duration is positive (Limit Orders)
-                # Market orders have duration == 0.0
-                if duration > 1e-9:  
+                # 2. SEPARATE LOGIC:
+                # If duration is effectively 0, it was a Market Order (Immediate).
+                # If duration > 0, it was a Limit Order (Resting).
+                if duration > 1e-10:
                     self.exec_times.append(duration)
+                else:
+                    self.mkt_exec_count += 1
 
         # MM inventory and cash: update when MM is involved
         for role, side in (("buy_order", "buy"), ("sell_order", "sell")):
@@ -261,11 +247,18 @@ class Simulation:
 
         # 7. Summaries
         avg_spread = float(np.mean(self.spreads)) if self.spreads else None
+        
+        # Median of RESTING orders (Limit orders)
         median_exec = float(np.median(self.exec_times)) if self.exec_times else None
+
+        # Calculate Total Executions (Resting Limit + Instant Market)
+        total_executions = len(self.exec_times) + self.mkt_exec_count
 
         return {
             "avg_spread": avg_spread,
             "median_exec_time": median_exec,
+            # Removed "mean_exec_time" from the return dictionary
+            "total_executions": total_executions,  # Includes Market & Limit
             "mm_final_pnl": self.mm.pnl(),
             "mm_final_inventory": self.mm.inventory,
             "spread_times": self.spread_times,
@@ -295,6 +288,7 @@ if __name__ == "__main__":
     results = sim.run()
     print("Average spread:        ", results["avg_spread"])
     print("Median exec time:      ", results["median_exec_time"])
+    # Removed Mean Execution Time print statement
     print("MM final P&L:          ", results["mm_final_pnl"])
     print("MM final inventory:    ", results["mm_final_inventory"])
-    print("Number of executions:  ", len(results["exec_times"]))
+    print("Number of executions:  ", results["total_executions"])
