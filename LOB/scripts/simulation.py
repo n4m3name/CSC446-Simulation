@@ -5,6 +5,8 @@ Main simulation loop for the limit order book.
 """
 
 import numpy as np
+import argparse
+import pandas as pd
 
 from order_book import OrderBook
 from market_maker import MarketMaker
@@ -257,7 +259,6 @@ class Simulation:
         return {
             "avg_spread": avg_spread,
             "median_exec_time": median_exec,
-            # Removed "mean_exec_time" from the return dictionary
             "total_executions": total_executions,  # Includes Market & Limit
             "mm_final_pnl": self.mm.pnl(),
             "mm_final_inventory": self.mm.inventory,
@@ -270,27 +271,96 @@ class Simulation:
         }
 
 if __name__ == "__main__":
-    import argparse
-    import pandas as pd
-    import numpy as np
 
-    parser = argparse.ArgumentParser(description="LOB Simulation Runner")
-    parser.add_argument(
-        "--activity",
-        action="store_true",
-        help="Run Low/Mid/High Activity scenarios (VFV-style rates)"
+    # --- CONSTANTS: Define Scenarios ONCE ---
+    SIM_DURATION = 600.0
+    INITIAL_PRICE = 100.0
+    MM_SKEW_COEF = 0.05
+
+    BASELINE_PARAMS = dict(
+        sim_duration=SIM_DURATION,
+        initial_price=INITIAL_PRICE,
+        lam_limit_buy=0.6,
+        lam_limit_sell=0.6,
+        lam_mkt_buy=0.2,
+        lam_mkt_sell=0.2,
+        lam_cancel=0.1,
+        mm_base_spread=2.0,
+        mm_skew_coef=MM_SKEW_COEF,
+        seed=123,
     )
-    parser.add_argument(
-        "--stress",
-        action="store_true",
-        help="Run Extended Stress-Test scenario suite (arrival/cancel/MM variations)"
+
+    ACTIVITY_SCENARIOS = {
+        "Low_Activity": {
+            "lam_limit_buy": 0.6,
+            "lam_limit_sell": 0.6,
+            "lam_mkt_buy": 0.2,
+            "lam_mkt_sell": 0.2,
+            "lam_cancel": 0.1,
+            "mm_base_spread": 2.0,
+            "seed": 100,
+        },
+        "Mid_Activity": {
+            "lam_limit_buy": 2.0,
+            "lam_limit_sell": 2.0,
+            "lam_mkt_buy": 0.8,
+            "lam_mkt_sell": 0.8,
+            "lam_cancel": 3.0,
+            "mm_base_spread": 1.0,
+            "seed": 200,
+        },
+        "High_Activity": {
+            "lam_limit_buy": 5.0,
+            "lam_limit_sell": 5.0,
+            "lam_mkt_buy": 2.0,
+            "lam_mkt_sell": 2.0,
+            "lam_cancel": 7.0,
+            "mm_base_spread": 0.5,
+            "seed": 300,
+        },
+    }
+
+    STRESS_BASE = dict(
+        sim_duration=SIM_DURATION,
+        initial_price=INITIAL_PRICE,
+        lam_limit_buy=0.6,
+        lam_limit_sell=0.6,
+        lam_mkt_buy=0.2,
+        lam_mkt_sell=0.2,
+        lam_cancel=0.1,
+        mm_base_spread=2.0,
+        mm_skew_coef=MM_SKEW_COEF,
     )
-    args = parser.parse_args()
+    
+    STRESS_SCENARIOS = {
+        "High order flow": {
+            "seed": 124,
+            "lam_limit_buy": 1.0,
+            "lam_limit_sell": 1.0,
+            "lam_mkt_buy": 0.4,
+            "lam_mkt_sell": 0.4
+        },
+        "Low order flow": {
+            "seed": 125,
+            "lam_limit_buy": 0.3,
+            "lam_limit_sell": 0.3,
+            "lam_mkt_buy": 0.1,
+            "lam_mkt_sell": 0.1
+        },
+        "High cancellations": {"seed": 126, "lam_cancel": 0.3},
+        "Low cancellations": {"seed": 127, "lam_cancel": 0.02},
+        "Aggressive MM": {"seed": 128, "mm_base_spread": 1.0, "mm_skew_coef": 0.02},
+        "Passive MM": {"seed": 129, "mm_base_spread": 3.0, "mm_skew_coef": 0.1},
+        "Buy pressure": {"seed": 130, "lam_limit_buy": 0.9, "lam_mkt_buy": 0.4},
+        "Sell pressure": {"seed": 131, "lam_limit_sell": 0.9, "lam_mkt_sell": 0.4},
+    }
+
 
     # ------------------------------------------------------------------
     # Helper: run a scenario and return results dict
     # ------------------------------------------------------------------
     def run_scenario(label, **params):
+        """Runs the simulation and prints key results."""
         sim = Simulation(**params)
         results = sim.run()
         print("\n=== Scenario:", label, "===")
@@ -303,151 +373,80 @@ if __name__ == "__main__":
         return results
 
     # ------------------------------------------------------------------
-    # MODE 1: No flags → run the BASELINE single-run test
+    # Helper: Run the Activity Scenario Suite
     # ------------------------------------------------------------------
-    if not args.activity and not args.stress:
-        print("Running single baseline simulation...\n")
-
-        baseline_params = dict(
-            sim_duration=600.0,
-            initial_price=100.0,
-            lam_limit_buy=0.6,
-            lam_limit_sell=0.6,
-            lam_mkt_buy=0.2,
-            lam_mkt_sell=0.2,
-            lam_cancel=0.1,
-            mm_base_spread=2.0,
-            mm_skew_coef=0.05,
-            seed=123,
-        )
-
-        run_scenario("Baseline", **baseline_params)
-        exit()
-
-    # ------------------------------------------------------------------
-    # MODE 2: --activity → run the Low/Mid/High Activity suite you provided
-    # ------------------------------------------------------------------
-    if args.activity:
+    def run_activity_suite():
         print("Running Activity Scenarios (Low/Mid/High)...")
-        SIM_DURATION = 600.0
-
-        scenarios = {
-            "Low_Activity": {
-                "lam_limit_buy": 0.6,
-                "lam_limit_sell": 0.6,
-                "lam_mkt_buy": 0.2,
-                "lam_mkt_sell": 0.2,
-                "lam_cancel": 0.1,
-                "mm_base_spread": 2.0,
-                "seed": 100,
-            },
-            "Mid_Activity": {
-                "lam_limit_buy": 2.0,
-                "lam_limit_sell": 2.0,
-                "lam_mkt_buy": 0.8,
-                "lam_mkt_sell": 0.8,
-                "lam_cancel": 3.0,
-                "mm_base_spread": 1.0,
-                "seed": 200,
-            },
-            "High_Activity": {
-                "lam_limit_buy": 5.0,
-                "lam_limit_sell": 5.0,
-                "lam_mkt_buy": 2.0,
-                "lam_mkt_sell": 2.0,
-                "lam_cancel": 7.0,
-                "mm_base_spread": 0.5,
-                "seed": 300,
-            },
-        }
-
-        for name, params in scenarios.items():
-            run_scenario(
-                name,
-                sim_duration=SIM_DURATION,
-                initial_price=100.0,
-                mm_skew_coef=0.05,
+        for name, params in ACTIVITY_SCENARIOS.items():
+            # Merge base parameters with scenario-specific overrides
+            full_params = {
+                "sim_duration": SIM_DURATION,
+                "initial_price": INITIAL_PRICE,
+                "mm_skew_coef": MM_SKEW_COEF,
                 **params
-            )
-        exit()
+            }
+            run_scenario(name, **full_params)
 
     # ------------------------------------------------------------------
-    # MODE 3: --stress → run the full experimental suite I designed
+    # Helper: Run the Stress-Test Scenario Suite
     # ------------------------------------------------------------------
-    if args.stress:
+    def run_stress_suite():
         print("Running Stress-Test Scenarios...")
-        SIM_DURATION = 600.0
-        base = dict(
-            sim_duration=SIM_DURATION,
-            initial_price=100.0,
-            lam_limit_buy=0.6,
-            lam_limit_sell=0.6,
-            lam_mkt_buy=0.2,
-            lam_mkt_sell=0.2,
-            lam_cancel=0.1,
-            mm_base_spread=2.0,
-            mm_skew_coef=0.05,
-        )
+        # Start with Baseline as the first test in the stress suite for context
+        run_scenario("Baseline", **BASELINE_PARAMS) 
 
-        # 1) Baseline
-        run_scenario("Baseline", seed=123, **base)
+        for name, params in STRESS_SCENARIOS.items():
+            # Merge the STRESS_BASE with the scenario-specific overrides
+            full_params = {**STRESS_BASE, **params}
+            run_scenario(name, **full_params)
+            
+    # ------------------------------------------------------------------
+    # Command Line Argument Parsing
+    # ------------------------------------------------------------------
+    parser = argparse.ArgumentParser(description="LOB Simulation Runner")
+    parser.add_argument(
+        "--activity",
+        action="store_true",
+        help="Run Low/Mid/High Activity scenarios (VFV-style rates)"
+    )
+    parser.add_argument(
+        "--stress",
+        action="store_true",
+        help="Run Extended Stress-Test scenario suite (arrival/cancel/MM variations)"
+    )
+    parser.add_argument(
+        "--all",
+        action="store_true",
+        help="Run baseline, activity, and stress suites sequentially"
+    )
+    args = parser.parse_args()
 
-        # 2) High order flow
-        run_scenario(
-            "High order flow",
-            seed=124,
-            **{**base,
-               "lam_limit_buy": 1.0,
-               "lam_limit_sell": 1.0,
-               "lam_mkt_buy": 0.4,
-               "lam_mkt_sell": 0.4}
-        )
+    # When --all is set, reuse existing branches by enabling both flags for execution flow
+    if args.all:
+        args.activity = True
+        args.stress = True
+    
+    # ------------------------------------------------------------------
+    # MODE SELECTION (Now only using the execution helper functions)
+    # ------------------------------------------------------------------
 
-        # 3) Low order flow
-        run_scenario(
-            "Low order flow",
-            seed=125,
-            **{**base,
-               "lam_limit_buy": 0.3,
-               "lam_limit_sell": 0.3,
-               "lam_mkt_buy": 0.1,
-               "lam_mkt_sell": 0.1}
-        )
+    is_baseline_only = not args.activity and not args.stress
 
-        # 4) High cancellations
-        run_scenario("High cancellations", seed=126, **{**base, "lam_cancel": 0.3})
+    if args.all:
+        print("Running full suite: Baseline, Activity, Stress...\n")
+        # Baseline is run as part of the stress suite now, but running it first for clarity
+        run_scenario("Baseline", **BASELINE_PARAMS)
+        run_activity_suite()
+        run_stress_suite()
+        
+    elif args.activity:
+        run_activity_suite()
 
-        # 5) Low cancellations
-        run_scenario("Low cancellations", seed=127, **{**base, "lam_cancel": 0.02})
+    elif args.stress:
+        run_stress_suite()
 
-        # 6) Aggressive MM
-        run_scenario(
-            "Aggressive MM",
-            seed=128,
-            **{**base, "mm_base_spread": 1.0, "mm_skew_coef": 0.02}
-        )
-
-        # 7) Passive MM
-        run_scenario(
-            "Passive MM",
-            seed=129,
-            **{**base, "mm_base_spread": 3.0, "mm_skew_coef": 0.1}
-        )
-
-        # 8) Buy pressure
-        run_scenario(
-            "Buy pressure",
-            seed=130,
-            **{**base,
-               "lam_limit_buy": 0.9,
-               "lam_mkt_buy": 0.4}
-        )
-
-        # 9) Sell pressure
-        run_scenario(
-            "Sell pressure",
-            seed=131,
-            **{**base,
-               "lam_limit_sell": 0.9,
-               "lam_mkt_sell": 0.4}
-        )
+    elif is_baseline_only:
+        print("Running single baseline simulation...\n")
+        run_scenario("Baseline", **BASELINE_PARAMS)
+        
+    # Exit is no longer needed on every branch since the logic is consolidated
