@@ -1,21 +1,27 @@
-# simulation.py
 """
 Main simulation loop for the limit order book.
-... (rest of the docstring remains the same)
+Includes:
+- Discrete Event Simulation engine
+- Market Maker logic
+- Statistical Aggregation (Mean + 95% CI)
+- Automated Parameter Sweeps
+- Command-line argument parsing to select experiments
 """
 
 import numpy as np
-import argparse
 import pandas as pd
+import math
+import argparse
 
+# We assume these are in the same directory. 
+# If running as a standalone script without these files, these imports would need those files present.
 from order_book import OrderBook
 from market_maker import MarketMaker
-
 
 class Simulation:
     def __init__(
         self,
-        sim_duration=60.0,          # total simulation time (arbitrary units)
+        sim_duration=600.0,      # change this to 23400 for the correct seconds in a trading day
         initial_price=100.0,
         # Poisson event rates (events per unit time)
         lam_limit_buy=0.5,
@@ -157,7 +163,7 @@ class Simulation:
     def run(self):
         """
         Run the discrete-event simulation until sim_duration.
-        Returns a dict of summary stats and time series.
+        Returns a dict of summary stats.
         """
         event_names = [
             "limit_buy",
@@ -248,205 +254,238 @@ class Simulation:
             self._record_mm_state()
 
         # 7. Summaries
-        avg_spread = float(np.mean(self.spreads)) if self.spreads else None
+        avg_spread = float(np.mean(self.spreads)) if self.spreads else 0.0
         
         # Median of RESTING orders (Limit orders)
-        median_exec = float(np.median(self.exec_times)) if self.exec_times else None
+        median_exec = float(np.median(self.exec_times)) if self.exec_times else 0.0
 
         # Calculate Total Executions (Resting Limit + Instant Market)
         total_executions = len(self.exec_times) + self.mkt_exec_count
 
+        # Return dict
         return {
             "avg_spread": avg_spread,
             "median_exec_time": median_exec,
-            "total_executions": total_executions,  # Includes Market & Limit
+            "total_executions": total_executions,
             "mm_final_pnl": self.mm.pnl(),
             "mm_final_inventory": self.mm.inventory,
-            "spread_times": self.spread_times,
-            "spreads": self.spreads,
-            "exec_times": self.exec_times,
-            "mm_times": self.mm_times,
-            "mm_pnls": self.mm_pnls,
-            "mm_inventory": self.mm_inventory,
         }
 
-if __name__ == "__main__":
+# ==============================================================================
+# STATISTICAL HELPER FUNCTIONS
+# ==============================================================================
 
-    # --- CONSTANTS: Define Scenarios ONCE ---
-    SIM_DURATION = 600.0
-    INITIAL_PRICE = 100.0
-    MM_SKEW_COEF = 0.05
-
-    BASELINE_PARAMS = dict(
-        sim_duration=SIM_DURATION,
-        initial_price=INITIAL_PRICE,
-        lam_limit_buy=0.6,
-        lam_limit_sell=0.6,
-        lam_mkt_buy=0.2,
-        lam_mkt_sell=0.2,
-        lam_cancel=0.1,
-        mm_base_spread=2.0,
-        mm_skew_coef=MM_SKEW_COEF,
-        seed=123,
-    )
-
-    ACTIVITY_SCENARIOS = {
-        "Low_Activity": {
-            "lam_limit_buy": 0.6,
-            "lam_limit_sell": 0.6,
-            "lam_mkt_buy": 0.2,
-            "lam_mkt_sell": 0.2,
-            "lam_cancel": 0.1,
-            "mm_base_spread": 2.0,
-            "seed": 100,
-        },
-        "Mid_Activity": {
-            "lam_limit_buy": 2.0,
-            "lam_limit_sell": 2.0,
-            "lam_mkt_buy": 0.8,
-            "lam_mkt_sell": 0.8,
-            "lam_cancel": 3.0,
-            "mm_base_spread": 1.0,
-            "seed": 200,
-        },
-        "High_Activity": {
-            "lam_limit_buy": 5.0,
-            "lam_limit_sell": 5.0,
-            "lam_mkt_buy": 2.0,
-            "lam_mkt_sell": 2.0,
-            "lam_cancel": 7.0,
-            "mm_base_spread": 0.5,
-            "seed": 300,
-        },
-    }
-
-    STRESS_BASE = dict(
-        sim_duration=SIM_DURATION,
-        initial_price=INITIAL_PRICE,
-        lam_limit_buy=0.6,
-        lam_limit_sell=0.6,
-        lam_mkt_buy=0.2,
-        lam_mkt_sell=0.2,
-        lam_cancel=0.1,
-        mm_base_spread=2.0,
-        mm_skew_coef=MM_SKEW_COEF,
-    )
+def calculate_stats(data_list, confidence=0.95):
+    """
+    Calculates Mean and 95% Confidence Interval for a list of numbers.
+    Uses t-distribution.
     
-    STRESS_SCENARIOS = {
-        "High order flow": {
-            "seed": 124,
-            "lam_limit_buy": 1.0,
-            "lam_limit_sell": 1.0,
-            "lam_mkt_buy": 0.4,
-            "lam_mkt_sell": 0.4
-        },
-        "Low order flow": {
-            "seed": 125,
-            "lam_limit_buy": 0.3,
-            "lam_limit_sell": 0.3,
-            "lam_mkt_buy": 0.1,
-            "lam_mkt_sell": 0.1
-        },
-        "High cancellations": {"seed": 126, "lam_cancel": 0.3},
-        "Low cancellations": {"seed": 127, "lam_cancel": 0.02},
-        "Aggressive MM": {"seed": 128, "mm_base_spread": 1.0, "mm_skew_coef": 0.02},
-        "Passive MM": {"seed": 129, "mm_base_spread": 3.0, "mm_skew_coef": 0.1},
-        "Buy pressure": {"seed": 130, "lam_limit_buy": 0.9, "lam_mkt_buy": 0.4},
-        "Sell pressure": {"seed": 131, "lam_limit_sell": 0.9, "lam_mkt_sell": 0.4},
+    Returns: (mean, ci_width)
+    Output Mean formatted as: mean
+    Output CI formatted as: mean +/- ci_width
+    """
+    n = len(data_list)
+    if n < 2:
+        return np.mean(data_list), 0.0
+    
+    mean = np.mean(data_list)
+    std_err = np.std(data_list, ddof=1) / math.sqrt(n)
+    
+    # t-critical value for 95% CI (two-tailed) with DOF = n-1
+    # For N=5, dof=4, t_0.025 approx 2.776
+    t_crit_map = {
+        5: 2.776,
+        10: 2.262,
+        30: 2.045
     }
+    t_crit = t_crit_map.get(n, 1.96) # Default to Z-score if N large/unknown
+    
+    ci_width = t_crit * std_err
+    return mean, ci_width
 
+# ==============================================================================
+# MAIN EXECUTION & PARAMETER SWEEPS
+# ==============================================================================
 
-    # ------------------------------------------------------------------
-    # Helper: run a scenario and return results dict
-    # ------------------------------------------------------------------
-    def run_scenario(label, **params):
-        """Runs the simulation and prints key results."""
-        sim = Simulation(**params)
-        results = sim.run()
-        print("\n=== Scenario:", label, "===")
-        print("Average spread:       ", results["avg_spread"])
-        print("Median exec time:     ", results["median_exec_time"])
-        print("MM final P&L:         ", results["mm_final_pnl"])
-        print("MM final inventory:   ", results["mm_final_inventory"])
-        print("Total executions:     ", results["total_executions"])
-        print("-" * 40)
-        return results
-
-    # ------------------------------------------------------------------
-    # Helper: Run the Activity Scenario Suite
-    # ------------------------------------------------------------------
-    def run_activity_suite():
-        print("Running Activity Scenarios (Low/Mid/High)...")
-        for name, params in ACTIVITY_SCENARIOS.items():
-            # Merge base parameters with scenario-specific overrides
-            full_params = {
-                "sim_duration": SIM_DURATION,
-                "initial_price": INITIAL_PRICE,
-                "mm_skew_coef": MM_SKEW_COEF,
-                **params
-            }
-            run_scenario(name, **full_params)
-
-    # ------------------------------------------------------------------
-    # Helper: Run the Stress-Test Scenario Suite
-    # ------------------------------------------------------------------
-    def run_stress_suite():
-        print("Running Stress-Test Scenarios...")
-        # Start with Baseline as the first test in the stress suite for context
-        run_scenario("Baseline", **BASELINE_PARAMS) 
-
-        for name, params in STRESS_SCENARIOS.items():
-            # Merge the STRESS_BASE with the scenario-specific overrides
-            full_params = {**STRESS_BASE, **params}
-            run_scenario(name, **full_params)
-            
-    # ------------------------------------------------------------------
-    # Command Line Argument Parsing
-    # ------------------------------------------------------------------
-    parser = argparse.ArgumentParser(description="LOB Simulation Runner")
+if __name__ == "__main__":
+    
+    # --- COMMAND LINE ARGUMENT PARSING ---
+    parser = argparse.ArgumentParser(description="LOB Simulation Experiment Runner")
     parser.add_argument(
-        "--activity",
-        action="store_true",
-        help="Run Low/Mid/High Activity scenarios (VFV-style rates)"
+        "--exp1", action="store_true", help="Run Experiment 1: Liquidity Supply (Sweeps lam_limit)"
     )
     parser.add_argument(
-        "--stress",
-        action="store_true",
-        help="Run Extended Stress-Test scenario suite (arrival/cancel/MM variations)"
+        "--exp2", action="store_true", help="Run Experiment 2: Market Stability (Sweeps lam_cancel)"
     )
     parser.add_argument(
-        "--all",
-        action="store_true",
-        help="Run baseline, activity, and stress suites sequentially"
+        "--exp3", action="store_true", help="Run Experiment 3: MM Strategy (Sweeps mm_skew_coef)"
+    )
+    parser.add_argument(
+        "--all", action="store_true", help="Run all experiments (Exp 1, 2, 3). This is the default if no flags are specified."
+    )
+    parser.add_argument(
+        "--replications", 
+        type=int, 
+        default=5, 
+        help="Number of replications to run per scenario (default: 5)"
     )
     args = parser.parse_args()
 
-    # When --all is set, reuse existing branches by enabling both flags for execution flow
-    if args.all:
-        args.activity = True
-        args.stress = True
+    # --- GLOBAL SETTINGS ---
+    SIM_DURATION = 23400.0  # 6.5 hours
+    NUM_REPLICATIONS = args.replications
     
-    # ------------------------------------------------------------------
-    # MODE SELECTION (Now only using the execution helper functions)
-    # ------------------------------------------------------------------
+    # Container for all final aggregated data
+    all_aggregated_results = []
 
-    is_baseline_only = not args.activity and not args.stress
+    # -----------------------------------------------------------
+    # DEFINE EXPERIMENTS
+    # -----------------------------------------------------------
+    
+    experiments = {
+        "Exp1_Liquidity_Supply": {
+            "flag": "exp1", # The associated command line flag
+            "variable_name": "lam_limit", # Affects both buy and sell
+            "values": [0.2, 0.5, 1.0, 2.0, 5.0],
+            "defaults": {
+                "lam_mkt_buy": 0.2, "lam_mkt_sell": 0.2, 
+                "lam_cancel": 0.1, "mm_skew_coef": 0.05,
+                "mm_base_spread": 1.0
+            }
+        },
+        "Exp2_Market_Stability": {
+            "flag": "exp2", # The associated command line flag
+            "variable_name": "lam_cancel",
+            "values": [0.1, 0.5, 1.0, 5.0, 10.0],
+            "defaults": {
+                "lam_limit_buy": 1.0, "lam_limit_sell": 1.0,
+                "lam_mkt_buy": 0.5, "lam_mkt_sell": 0.5,
+                "mm_skew_coef": 0.05,
+                "mm_base_spread": 1.0
+            }
+        },
+        "Exp3_MM_Strategy": {
+            "flag": "exp3", # The associated command line flag
+            "variable_name": "mm_skew_coef",
+            "values": [0.0, 0.01, 0.05, 0.1, 0.5],
+            "defaults": {
+                "lam_limit_buy": 0.6, "lam_limit_sell": 0.6,
+                "lam_mkt_buy": 0.2, "lam_mkt_sell": 0.2,
+                "lam_cancel": 0.1,
+                "mm_base_spread": 1.0
+            }
+        }
+    }
 
-    if args.all:
-        print("Running full suite: Baseline, Activity, Stress...\n")
-        # Baseline is run as part of the stress suite now, but running it first for clarity
-        run_scenario("Baseline", **BASELINE_PARAMS)
-        run_activity_suite()
-        run_stress_suite()
+    # Determine which experiments to run
+    experiments_to_run = []
+    
+    # If no specific experiment flags or --all is provided, run all
+    if args.all or (not args.exp1 and not args.exp2 and not args.exp3):
+        experiments_to_run = experiments.values()
+    else:
+        # Otherwise, run only the selected ones
+        if args.exp1:
+            experiments_to_run.append(experiments["Exp1_Liquidity_Supply"])
+        if args.exp2:
+            experiments_to_run.append(experiments["Exp2_Market_Stability"])
+        if args.exp3:
+            experiments_to_run.append(experiments["Exp3_MM_Strategy"])
+
+    if not experiments_to_run:
+        print("No experiments selected. Use --all or specific experiment flags (--exp1, --exp2, --exp3).")
+        exit()
+
+    print(f"Starting Simulation Suite.")
+    print(f"Duration: {SIM_DURATION}s | Replications per scenario: {NUM_REPLICATIONS}")
+    print("-" * 60)
+
+    # -----------------------------------------------------------
+    # MAIN LOOP
+    # -----------------------------------------------------------
+
+    for exp_config in experiments_to_run:
+        exp_name = next(k for k, v in experiments.items() if v == exp_config)
+        var_name = exp_config["variable_name"]
+        sweep_values = exp_config["values"]
+        defaults = exp_config["defaults"]
         
-    elif args.activity:
-        run_activity_suite()
+        print(f"\nRunning {exp_name} (Sweeping {var_name})...")
 
-    elif args.stress:
-        run_stress_suite()
+        for val in sweep_values:
+            
+            # --- 1. PREPARE PARAMETERS ---
+            # Start with defaults
+            current_params = defaults.copy()
+            current_params["sim_duration"] = SIM_DURATION
+            
+            # Apply the independent variable value
+            if var_name == "lam_limit":
+                current_params["lam_limit_buy"] = val
+                current_params["lam_limit_sell"] = val
+            else:
+                current_params[var_name] = val
+            
+            # --- 2. REPLICATION LOOP ---
+            replication_results = []
+            
+            for i in range(NUM_REPLICATIONS):
+                # Unique seed for every run: 1000 + (val_index * 100) + replication_index
+                # Ensure reproducibility but independence
+                seed = 1000 + int(val * 100) + i
+                
+                sim = Simulation(seed=seed, **current_params)
+                res = sim.run()
+                replication_results.append(res)
+            
+            # --- 3. STATISTICAL AGGREGATION ---
+            # Extract lists for metrics
+            spreads = [r["avg_spread"] for r in replication_results]
+            exec_times = [r["median_exec_time"] for r in replication_results]
+            pnls = [r["mm_final_pnl"] for r in replication_results]
+            invs = [abs(r["mm_final_inventory"]) for r in replication_results] # Abs inventory for risk
+            exec_counts = [r["total_executions"] for r in replication_results]
 
-    elif is_baseline_only:
-        print("Running single baseline simulation...\n")
-        run_scenario("Baseline", **BASELINE_PARAMS)
-        
-    # Exit is no longer needed on every branch since the logic is consolidated
+            # Compute Mean and CI
+            mean_spread, ci_spread = calculate_stats(spreads)
+            mean_exec, ci_exec = calculate_stats(exec_times)
+            mean_pnl, ci_pnl = calculate_stats(pnls)
+            mean_inv, ci_inv = calculate_stats(invs)
+            mean_vol, ci_vol = calculate_stats(exec_counts)
+
+            # Log to console
+            print(f"  {var_name}={val}: Spread={mean_spread:.3f}±{ci_spread:.3f}, PnL={mean_pnl:.2f}±{ci_pnl:.2f}")
+
+            # --- 4. STORE RESULTS ---
+            row = {
+                "Experiment": exp_name,
+                "Independent_Var": var_name,
+                "Value": val,
+                # Spreads
+                "Avg_Spread_Mean": mean_spread,
+                "Avg_Spread_CI": ci_spread,
+                # Execution Times
+                "Median_Exec_Time_Mean": mean_exec,
+                "Median_Exec_Time_CI": ci_exec,
+                # PnL
+                "MM_PnL_Mean": mean_pnl,
+                "MM_PnL_CI": ci_pnl,
+                # Inventory (Absolute)
+                "MM_Abs_Inventory_Mean": mean_inv,
+                "MM_Abs_Inventory_CI": ci_inv,
+                # Volume
+                "Volume_Mean": mean_vol,
+                "Volume_CI": ci_vol
+            }
+            all_aggregated_results.append(row)
+
+    # -----------------------------------------------------------
+    # EXPORT TO CSV
+    # -----------------------------------------------------------
+    
+    df = pd.DataFrame(all_aggregated_results)
+    filename = "data/simulation_results.csv"
+    df.to_csv(filename, index=False)
+    print("\n" + "="*60)
+    print(f"Simulation Suite Complete. Results saved to {filename}")
+    print("="*60)
