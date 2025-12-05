@@ -96,7 +96,7 @@ class Simulation:
 
     def __init__(
         self,
-        sim_duration=23400.0,
+        sim_duration=12000.0,
         initial_price=100.0,
         # event rates (events per second)
         lam_limit_buy=0.5,
@@ -104,11 +104,13 @@ class Simulation:
         lam_mkt_buy=0.2,
         lam_mkt_sell=0.2,
         lam_cancel=0.1,
+        # *** FIX (1): LOB Structure Parameter (Decay) ***
+        limit_price_decay_rate=0.5,
         # market maker params
         mm_base_spread=1.0,
         mm_skew_coef=0.05,
         mm_quote_interval=0.0,
-        # order sizing
+        # *** FIX (2): Order Sizing ***
         order_size_mean=1.0,
         # RNG seed
         seed=None,
@@ -122,11 +124,15 @@ class Simulation:
         self.lam_mkt_buy = float(lam_mkt_buy)
         self.lam_mkt_sell = float(lam_mkt_sell)
         self.lam_cancel = float(lam_cancel)
+        
+        # *** NEW ASSIGNMENT (FIX 1) ***
+        self.limit_price_decay_rate = float(limit_price_decay_rate)
 
         self.mm_base_spread = float(mm_base_spread)
         self.mm_skew_coef = float(mm_skew_coef)
         self.mm_quote_interval = float(mm_quote_interval)
 
+        # *** ASSIGNMENT (FIX 2) ***
         self.order_size_mean = float(order_size_mean)
 
         self.rng = np.random.default_rng(seed)
@@ -172,16 +178,48 @@ class Simulation:
     def _reference_price(self):
         return getattr(self.book, "last_trade_price", None) or self.initial_price
 
-    def _sample_limit_price(self):
-        ref = self._reference_price()
-        tick = 0.5
-        offset = int(self.rng.integers(-5, 6))
-        price = ref + offset * tick
+    def _mid_price(self):
+        """Calculates the mid-point between the best bid and best ask."""
+        best_bid = self.book.best_bid()
+        best_ask = self.book.best_ask()
+        if best_bid is None or best_ask is None:
+            return self._reference_price()
+        return 0.5 * (best_bid.price + best_ask.price)
+
+    def _sample_limit_price(self, side):
+        """
+        Samples a limit price using geometric distribution to model
+        exponential decay of liquidity away from the mid-price.
+        (FIX 1 IMPLEMENTATION)
+        """
+        mid = self._mid_price()
+        tick = 0.5 # Based on observation from the old sampling logic and typical LOBs
+
+        # Sample the distance in ticks using geometric distribution
+        # The geometric distribution returns the number of trials needed to get the first success (k>=1).
+        distance_ticks = self.rng.geometric(p=self.limit_price_decay_rate) 
+        
+        # Adjust the order price based on the side
+        if side == "buy":
+            # Bids must be below the mid-price
+            price = mid - distance_ticks * tick
+        else:
+            # Asks must be above the mid-price
+            price = mid + distance_ticks * tick
+        
+        # Ensure price is valid (e.g., above 0) and snap to tick size
+        price = round(price / tick) * tick
         return max(tick, price)
 
     def _sample_order_size(self):
+        """
+        Samples order size using a Poisson distribution for realistic size heterogeneity.
+        (FIX 2 IMPLEMENTATION)
+        """
         if self.order_size_mean <= 1.0:
             return 1
+        
+        # Use existing Poisson logic for simplicity and alignment with sweep goals.
         size = self.rng.poisson(lam=self.order_size_mean)
         return max(1, int(size))
 
@@ -263,14 +301,14 @@ class Simulation:
             # handle ties by priority to avoid ambiguity
             if self.next_limit_buy == next_time:
                 # submit limit buy
-                price = self._sample_limit_price()
+                price = self._sample_limit_price("buy")
                 size = self._sample_order_size()
                 self.book.submit_limit(trader_id="noise", side="buy", price=price, quantity=size, time_created=self.time)
                 # schedule next
                 self.next_limit_buy = self._sample_next(self.lam_limit_buy)
 
             elif self.next_limit_sell == next_time:
-                price = self._sample_limit_price()
+                price = self._sample_limit_price("sell")
                 size = self._sample_order_size()
                 self.book.submit_limit(trader_id="noise", side="sell", price=price, quantity=size, time_created=self.time)
                 self.next_limit_sell = self._sample_next(self.lam_limit_sell)
@@ -464,6 +502,7 @@ if __name__ == "__main__":
     parser.add_argument("--exp1", action="store_true")
     parser.add_argument("--exp2", action="store_true")
     parser.add_argument("--exp3", action="store_true")
+    parser.add_argument("--exp4", action="store_true") # <-- NEW FLAG ADDED
     parser.add_argument("--all", action="store_true")
     parser.add_argument("--replications", type=int, default=10)
     parser.add_argument("--duration", type=float, default=23400.0, help="simulation duration in seconds")
@@ -472,11 +511,14 @@ if __name__ == "__main__":
 
     SIM_DURATION = float(args.duration)
     REPS = int(args.replications)
+    
+    # --- NEW DEFAULT PARAMETERS ---
+    LIMIT_DECAY_RATE_DEFAULT = 0.5 
+    ORDER_SIZE_MEAN_DEFAULT = 1.0
 
     experiments = {
         "Exp1_Liquidity_Supply": {
             "variable_name": "lam_limit",
-            # values are events per second: e.g. 0.2 events/sec = 12 events/minute
             "values": [0.2, 0.5, 1.0, 2.0, 5.0],
             "defaults": {
                 "lam_limit_buy": 0.5,
@@ -484,10 +526,11 @@ if __name__ == "__main__":
                 "lam_mkt_buy": 0.2,
                 "lam_mkt_sell": 0.2,
                 "lam_cancel": 0.1,
+                "limit_price_decay_rate": LIMIT_DECAY_RATE_DEFAULT,
                 "mm_base_spread": 1.0,
                 "mm_skew_coef": 0.05,
                 "mm_quote_interval": 0.0,
-                "order_size_mean": 1.0,
+                "order_size_mean": ORDER_SIZE_MEAN_DEFAULT,
             },
         },
         "Exp2_Market_Stability": {
@@ -499,10 +542,11 @@ if __name__ == "__main__":
                 "lam_mkt_buy": 0.5,
                 "lam_mkt_sell": 0.5,
                 "lam_cancel": 0.1,
+                "limit_price_decay_rate": LIMIT_DECAY_RATE_DEFAULT,
                 "mm_base_spread": 1.0,
                 "mm_skew_coef": 0.05,
                 "mm_quote_interval": 0.0,
-                "order_size_mean": 1.0,
+                "order_size_mean": ORDER_SIZE_MEAN_DEFAULT,
             },
         },
         "Exp3_MM_Strategy": {
@@ -514,25 +558,52 @@ if __name__ == "__main__":
                 "lam_mkt_buy": 0.2,
                 "lam_mkt_sell": 0.2,
                 "lam_cancel": 0.1,
+                "limit_price_decay_rate": LIMIT_DECAY_RATE_DEFAULT,
                 "mm_base_spread": 1.0,
                 "mm_skew_coef": 0.05,
                 "mm_quote_interval": 0.0,
-                "order_size_mean": 1.0,
+                "order_size_mean": ORDER_SIZE_MEAN_DEFAULT,
+            },
+        },
+        # *** NEW EXPERIMENT 4: Order Sizing ***
+        "Exp4_Order_Sizing": {
+            "variable_name": "order_size_mean",
+            # Sweep from fixed size 1 to large block orders (mean 10)
+            "values": [1.0, 2.0, 5.0, 10.0],
+            "defaults": {
+                "lam_limit_buy": 1.0,
+                "lam_limit_sell": 1.0,
+                "lam_mkt_buy": 0.5,
+                "lam_mkt_sell": 0.5,
+                "lam_cancel": 0.1,
+                "limit_price_decay_rate": LIMIT_DECAY_RATE_DEFAULT,
+                "mm_base_spread": 1.0,
+                "mm_skew_coef": 0.05,
+                "mm_quote_interval": 0.0,
+                "order_size_mean": ORDER_SIZE_MEAN_DEFAULT, # This will be overwritten by 'values'
             },
         },
     }
 
     # choose experiments
-    exps_to_run = []
-    if args.all or (not args.exp1 and not args.exp2 and not args.exp3):
+    exps_to_run = {}
+    
+    # Check if any experiment flag is explicitly set
+    exp_flags_set = args.exp1 or args.exp2 or args.exp3 or args.exp4
+    
+    if args.all or not exp_flags_set:
+        # Run all experiments by default or if --all is specified
         exps_to_run = experiments
     else:
+        # Run only the specified experiments
         if args.exp1:
             exps_to_run["Exp1_Liquidity_Supply"] = experiments["Exp1_Liquidity_Supply"]
         if args.exp2:
             exps_to_run["Exp2_Market_Stability"] = experiments["Exp2_Market_Stability"]
         if args.exp3:
             exps_to_run["Exp3_MM_Strategy"] = experiments["Exp3_MM_Strategy"]
+        if args.exp4:
+            exps_to_run["Exp4_Order_Sizing"] = experiments["Exp4_Order_Sizing"]
 
     # run
     run_suite(sim_duration=SIM_DURATION, replications=REPS, experiments=exps_to_run, output_file=args.output)
