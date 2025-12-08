@@ -397,9 +397,9 @@ def run_experiment_suite(sim_duration=23400.0, replications=5, output_file="simu
     """
     # factors and levels (user-specified design)
     FACTORS = {
-        "order_size_mean": [1.0, 5.0],
-        "limit_price_decay_rate": [0.5, 0.1],
-        "mm_base_spread": [0.5, 2.0],
+        "order_size_mean": [1.0, 3.0, 5.0, 7.0, 10.0],
+        "limit_price_decay_rate": [0.05, 0.1, 0.2, 0.3, 0.5],
+        "mm_base_spread": [0.1, 0.25, 0.5, 1.0, 2.0],
     }
 
     # build scenarios dictionary
