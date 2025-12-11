@@ -23,7 +23,7 @@ def main():
     ]
 
     # ------------------------------------------------------------------
-    # 3. Merge
+    # 3. Merge (one row per scenario after the drop_duplicates in 95s.py)
     # ------------------------------------------------------------------
     df = factors.merge(ci, on="Scenario", how="inner")
 
@@ -44,7 +44,7 @@ def main():
     df.to_csv(scenario_out, index=False)
 
     # ------------------------------------------------------------------
-    # 5. Metrics (use mean execution time instead of price volatility)
+    # 5. Metrics: avg spread, MEDIAN exec time, MM PnL per 1k trades
     # ------------------------------------------------------------------
     metrics = {
         "avg_spread": {
@@ -52,10 +52,10 @@ def main():
             "lower_col": "avg_spread_CI95_lower",
             "upper_col": "avg_spread_CI95_upper",
         },
-        "mean_exec_time": {
-            "mean_col": "mean_exec_time_mean",
-            "lower_col": "mean_exec_time_CI95_lower",
-            "upper_col": "mean_exec_time_CI95_upper",
+        "median_exec_time": {
+            "mean_col": "median_exec_time_mean",
+            "lower_col": "median_exec_time_CI95_lower",
+            "upper_col": "median_exec_time_CI95_upper",
         },
         "mm_pnl_per_1k_trades": {
             "mean_col": "mm_final_pnl_per_1k_trades_mean",
