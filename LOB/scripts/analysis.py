@@ -31,7 +31,7 @@ def main():
         print(f"Warning: expected 125 scenarios, got {df.shape[0]} rows after merge.")
 
     # ------------------------------------------------------------------
-    # DIRECTORIES (NEW)
+    # 4. Output directories
     # ------------------------------------------------------------------
     data_dir = "data/analysis"
     figs_dir = "figs/analysis"
@@ -44,7 +44,7 @@ def main():
     df.to_csv(scenario_out, index=False)
 
     # ------------------------------------------------------------------
-    # 4. Metrics
+    # 5. Metrics (use mean execution time instead of price volatility)
     # ------------------------------------------------------------------
     metrics = {
         "avg_spread": {
@@ -52,10 +52,10 @@ def main():
             "lower_col": "avg_spread_CI95_lower",
             "upper_col": "avg_spread_CI95_upper",
         },
-        "price_volatility": {
-            "mean_col": "price_volatility_mean",
-            "lower_col": "price_volatility_CI95_lower",
-            "upper_col": "price_volatility_CI95_upper",
+        "mean_exec_time": {
+            "mean_col": "mean_exec_time_mean",
+            "lower_col": "mean_exec_time_CI95_lower",
+            "upper_col": "mean_exec_time_CI95_upper",
         },
         "mm_pnl_per_1k_trades": {
             "mean_col": "mm_final_pnl_per_1k_trades_mean",
@@ -67,7 +67,7 @@ def main():
     factors_list = ["order_size_mean", "limit_price_decay_rate", "mm_base_spread"]
 
     # ------------------------------------------------------------------
-    # 5. Main effects
+    # 6. Main effects
     # ------------------------------------------------------------------
     for metric_name, spec in metrics.items():
         mean_col = spec["mean_col"]
@@ -86,7 +86,7 @@ def main():
             main_effect.to_csv(out_path, index=False)
 
     # ------------------------------------------------------------------
-    # 6. Two-factor interactions
+    # 7. Two-factor interactions
     # ------------------------------------------------------------------
     for metric_name, spec in metrics.items():
         mean_col = spec["mean_col"]
@@ -105,7 +105,7 @@ def main():
             interaction.to_csv(out_path)
 
     # ------------------------------------------------------------------
-    # 7. Scenario rankings
+    # 8. Scenario rankings
     # ------------------------------------------------------------------
     rank_cols = [
         "Scenario",
@@ -129,7 +129,7 @@ def main():
         top5.to_csv(top_out, index=False)
 
     # ------------------------------------------------------------------
-    # 8. CI width summaries
+    # 9. CI width summaries
     # ------------------------------------------------------------------
     ci_summary_rows = []
     for metric_name, spec in metrics.items():
