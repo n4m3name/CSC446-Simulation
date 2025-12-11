@@ -12,10 +12,10 @@ def main():
             "upper": "avg_spread_CI95_upper",
             "outfile": "appendix_B_avg_spread_CI.tex"
         },
-        "price_volatility": {
-            "lower": "price_volatility_CI95_lower",
-            "upper": "price_volatility_CI95_upper",
-            "outfile": "appendix_B_price_volatility_CI.tex"
+        "median_exec_time": {
+            "lower": "median_exec_time_CI95_lower",
+            "upper": "median_exec_time_CI95_upper",
+            "outfile": "appendix_B_median_exec_time_CI.tex"
         },
         "mm_final_pnl_per_1k_trades": {
             "lower": "mm_final_pnl_per_1k_trades_CI95_lower",
