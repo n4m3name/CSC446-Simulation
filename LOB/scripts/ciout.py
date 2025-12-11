@@ -2,29 +2,45 @@ import pandas as pd
 
 def main():
     in_path = "data/lob_y_CI95_by_scenario.csv"
-    out_path = "data/appendix_CI_primary_metrics.tex"
 
     df = pd.read_csv(in_path)
 
-    # Columns to keep: Scenario + CI bounds for the 3 primary metrics (no fill rate)
-    cols = [
-        "Scenario",
-        "avg_spread_CI95_lower",
-        "avg_spread_CI95_upper",
-        "price_volatility_CI95_lower",
-        "price_volatility_CI95_upper",
-        "mm_final_pnl_per_1k_trades_CI95_lower",
-        "mm_final_pnl_per_1k_trades_CI95_upper",
-    ]
+    # Define the three metrics of interest and their CI columns
+    metrics = {
+        "avg_spread": {
+            "lower": "avg_spread_CI95_lower",
+            "upper": "avg_spread_CI95_upper",
+            "outfile": "appendix_B_avg_spread_CI.tex"
+        },
+        "price_volatility": {
+            "lower": "price_volatility_CI95_lower",
+            "upper": "price_volatility_CI95_upper",
+            "outfile": "appendix_B_price_volatility_CI.tex"
+        },
+        "mm_final_pnl_per_1k_trades": {
+            "lower": "mm_final_pnl_per_1k_trades_CI95_lower",
+            "upper": "mm_final_pnl_per_1k_trades_CI95_upper",
+            "outfile": "appendix_B_mm_pnl_CI.tex"
+        },
+    }
 
-    ci_df = df[cols]
+    for metric_name, spec in metrics.items():
+        lower_col = spec["lower"]
+        upper_col = spec["upper"]
+        outfile = spec["outfile"]
 
-    # Convert to LaTeX tabular; adjust float_format if you want more/less precision
-    latex_table = ci_df.to_latex(index=False, float_format="%.6g")
+        # Build a compact DataFrame for this metric only
+        metric_df = df[["Scenario", lower_col, upper_col]].copy()
 
-    # Write directly to a .tex file for inclusion in the appendix
-    with open(out_path, "w") as f:
-        f.write(latex_table)
+        # Rename columns to avoid underscores (so LaTeX treats them as text, not math)
+        metric_df.columns = ["Scenario", "Lower 95% CI", "Upper 95% CI"]
+
+        # Convert to LaTeX. escape=True (default) keeps things as text.
+        latex_tabular = metric_df.to_latex(index=False, float_format="%.6g")
+
+        # Write just the tabular environment to a .tex file
+        with open(outfile, "w") as f:
+            f.write(latex_tabular)
 
 if __name__ == "__main__":
     main()
